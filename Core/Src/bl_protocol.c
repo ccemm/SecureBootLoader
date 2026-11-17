@@ -69,6 +69,7 @@ enum {
     ERR_NOT_PERMITTED   = 0x0C,
     ERR_HW_MISMATCH     = 0x0D,
     ERR_NO_APP          = 0x0E,
+    ERR_SIGNATURE       = 0x10,
     ERR_INTERNAL        = 0x7F,
 };
 
@@ -177,8 +178,8 @@ static uint16_t cmd_connect(const uint8_t *req, uint16_t len, uint8_t *resp)
     resp[1] = BL_PROTO_MAJOR;
     resp[2] = BL_PROTO_MINOR;
     put_u16(&resp[3], BL_MAX_PAYLOAD);
-    resp[5] = 0;                     // security level 0: simple (CRC only)
-    memset(&resp[6], 0, 16);         // nonce unused in the simple bootloader
+    resp[5] = BL_SECURITY_LEVEL;     // 1: signed images required
+    memset(&resp[6], 0, 16);         // nonce unused, no AUTH_* commands
 
     state = STATE_CONNECTED;
     return 22;
@@ -251,6 +252,11 @@ static uint16_t cmd_update_begin(const uint8_t *req, uint16_t len, uint8_t *resp
     if (m.image_size == 0U || m.image_size > BL_APP_MAX_SIZE) {
         bl_log("UPDATE_BEGIN: image size %lu", m.image_size);
         return status_only(resp, ERR_BAD_LENGTH);
+    }
+    // An unsigned or forged manifest must not even invalidate the installed app
+    if (!bl_manifest_signature_ok(&m)) {
+        bl_log("UPDATE_BEGIN: signature rejected");
+        return status_only(resp, ERR_SIGNATURE);
     }
 
     // From here on the old application will not be started again
@@ -341,12 +347,16 @@ static uint16_t cmd_update_verify(const uint8_t *req, uint16_t len, uint8_t *res
         update_abort(STATE_CONNECTED, "verify failed");
         return status_only(resp, ERR_VERIFY);
     }
+    if (!bl_image_sha256_ok(&upd_manifest)) {
+        update_abort(STATE_CONNECTED, "SHA-256 mismatch");
+        return status_only(resp, ERR_VERIFY);
+    }
     if (!bl_vectors_valid(BL_APP_START)) {
         update_abort(STATE_CONNECTED, "image has no valid vector table");
         return status_only(resp, ERR_VERIFY);
     }
 
-    bl_log("Image verified, CRC 0x%08lX", crc);
+    bl_log("Image verified, CRC 0x%08lX, SHA-256 ok", crc);
     state = STATE_VERIFIED;
     resp[0] = ST_OK;
     put_u32(&resp[1], crc);

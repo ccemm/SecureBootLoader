@@ -25,8 +25,17 @@ bool bl_force_pin_active(void);
 /* True if the first two words of an image look like a vector table for this device */
 bool bl_vectors_valid(uint32_t image_addr);
 
-/* Check the installed application against the boot record: state VALID,
-   CRC-32 of the flash image and vector table. rec receives the current record. */
+/* SHA-256 of the image in flash (m->image_size bytes at BL_APP_START) equals
+   m->image_sha256. Logs the computed hash, and the expected one on a mismatch. */
+bool bl_image_sha256_ok(const bl_manifest_t *m);
+
+/* Manifest carries the SIGNED flag and a valid ECDSA P-256 signature over bytes 0..63,
+   made with the private key matching bl_public_key. Always true with BL_SECURITY_LEVEL 0. */
+bool bl_manifest_signature_ok(const bl_manifest_t *m);
+
+/* Check the installed application against the boot record: state VALID, manifest
+   signature, CRC-32 and SHA-256 of the flash image and vector table.
+   rec receives the current record. */
 bl_app_state_t bl_app_check(bl_boot_record_t *rec);
 
 /* Boot decision: bl_app_check() == APP_VALID, or, with BL_DEV_ACCEPT_UNRECORDED_APP,

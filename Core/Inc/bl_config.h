@@ -20,6 +20,12 @@
 
 /* Build options */
 #define BL_DEBUG                1         /* debug log on USART2 */
+
+/* Security level reported by CONNECT.
+   0 = integrity only (CRC-32 + SHA-256)
+   1 = signed images required: UPDATE_BEGIN and every boot check the ECDSA P-256
+       signature of the manifest with the public key in bl_public_key.c */
+#define BL_SECURITY_LEVEL       1
 #define BL_ENABLE_READ_MEMORY   1         /* READ_MEMORY command (development builds) */
 
 /* Development only: if there is NO boot record at all (app programmed with

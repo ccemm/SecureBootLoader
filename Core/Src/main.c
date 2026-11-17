@@ -25,7 +25,9 @@
 #include "bl_boot.h"
 #include "bl_config.h"
 #include "bl_debug.h"
+#include "bl_ecdsa.h"
 #include "bl_protocol.h"
+#include "bl_sha256.h"
 #include "bl_uart.h"
 /* USER CODE END Includes */
 
@@ -100,6 +102,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
   bl_debug_init(&huart2);
   bl_log("Bootloader %u.%u.%u", BL_VERSION_MAJOR, BL_VERSION_MINOR, BL_VERSION_PATCH);
+  bl_log("SHA-256 self-test %s", sha256_self_test() ? "passed" : "FAILED");
+  bl_log("ECDSA self-test %s", bl_ecdsa_self_test() ? "passed" : "FAILED");
 
   // Boot decision (spec section 3.2): request flag, forced-entry pin, valid application
   if (bl_boot_flag_check_and_clear())

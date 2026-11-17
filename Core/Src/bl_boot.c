@@ -6,7 +6,11 @@
 #include "bl_config.h"
 #include "bl_crc.h"
 #include "bl_debug.h"
+#include "bl_ecdsa.h"
+#include "bl_sha256.h"
 #include "main.h"
+#include <stddef.h>
+#include <string.h>
 
 #define BOOT_FLAG (*(volatile uint32_t *)BL_BOOT_FLAG_ADDR)
 
@@ -40,6 +44,59 @@ bool bl_vectors_valid(uint32_t image_addr)
     return true;
 }
 
+#if BL_DEBUG
+static void log_hash(const char *label, const uint8_t *h)
+{
+    char hex[2U * SHA256_SIZE + 1U];
+
+    for (uint32_t i = 0; i < SHA256_SIZE; i++) {
+        hex[2U * i]      = "0123456789abcdef"[h[i] >> 4];
+        hex[2U * i + 1U] = "0123456789abcdef"[h[i] & 0x0FU];
+    }
+    hex[2U * SHA256_SIZE] = '\0';
+    bl_log("%s %s", label, hex);
+}
+#else
+#define log_hash(label, h)  ((void)0)
+#endif
+
+bool bl_image_sha256_ok(const bl_manifest_t *m)
+{
+    uint8_t digest[SHA256_SIZE];
+    uint32_t t0 = HAL_GetTick();
+
+    sha256((const uint8_t *)BL_APP_START, m->image_size, digest);
+    if (memcmp(digest, m->image_sha256, SHA256_SIZE) != 0) {
+        bl_log("SHA-256 mismatch:");
+        log_hash("  flash   ", digest);
+        log_hash("  manifest", m->image_sha256);
+        return false;
+    }
+
+    bl_log("SHA-256 ok (%lu ms)", HAL_GetTick() - t0);
+    log_hash("  flash   ", digest);
+    return true;
+}
+
+bool bl_manifest_signature_ok(const bl_manifest_t *m)
+{
+#if BL_SECURITY_LEVEL >= 1
+    uint32_t t0 = HAL_GetTick();
+    bool ok;
+
+    if ((m->flags & BL_FLAG_SIGNED) == 0U) {
+        bl_log("Signature: manifest is not signed");
+        return false;
+    }
+    ok = bl_ecdsa_verify(bl_public_key, (const uint8_t *)m, offsetof(bl_manifest_t, signature), m->signature);
+    bl_log("Signature %s (%lu ms)", ok ? "ok" : "INVALID", HAL_GetTick() - t0);
+    return ok;
+#else
+    (void)m;
+    return true;
+#endif
+}
+
 bl_app_state_t bl_app_check(bl_boot_record_t *rec)
 {
     const bl_manifest_t *m = &rec->manifest;
@@ -57,10 +114,20 @@ bl_app_state_t bl_app_check(bl_boot_record_t *rec)
         bl_log("App check: manifest address/size out of range");
         return APP_INVALID;
     }
+    // The record is in EEPROM, which the application can write, so the stored
+    // manifest is re-authenticated on every check, not only at UPDATE_BEGIN
+    if (!bl_manifest_signature_ok(m)) {
+        bl_log("App check: manifest signature not valid");
+        return APP_INVALID;
+    }
 
     crc = crc32_iso_hdlc((const uint8_t *)BL_APP_START, m->image_size);
     if (crc != m->image_crc32) {
         bl_log("App check: CRC mismatch, flash 0x%08lX, manifest 0x%08lX", crc, m->image_crc32);
+        return APP_INVALID;
+    }
+    if (!bl_image_sha256_ok(m)) {
+        bl_log("App check: SHA-256 mismatch");
         return APP_INVALID;
     }
     if (!bl_vectors_valid(BL_APP_START)) {
